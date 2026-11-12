@@ -3,10 +3,8 @@ name: BigQuery Migration CI/CD
 on:
   push:
     branches:
-      - main
-  pull_request:
-    branches:
-      - main
+      - test/cicd-verification
+
   workflow_dispatch:
 
 jobs:
