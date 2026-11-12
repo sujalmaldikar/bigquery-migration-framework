@@ -1,0 +1,80 @@
+name: BigQuery Migration CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Migration Framework
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate Python Syntax
+        run: |
+          python -m py_compile scripts/migrate.py
+          python -m py_compile scripts/test_bigquery.py
+
+      - name: Validate Migration SQL Files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          migrations = sorted(Path("migrations").glob("*.sql"))
+
+          if not migrations:
+              raise SystemExit("ERROR: No migration SQL files found")
+
+          for migration in migrations:
+              sql = migration.read_text().strip()
+
+              if not sql:
+                  raise SystemExit(f"ERROR: Empty migration: {migration}")
+
+              print(f"VALID: {migration}")
+
+          print(f"Validated {len(migrations)} migration files.")
+          PY
+
+      - name: Validate Rollback SQL Files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          migrations = sorted(Path("migrations").glob("*.sql"))
+          rollback_dir = Path("rollback")
+
+          for migration in migrations:
+              rollback = rollback_dir / migration.name
+
+              if not rollback.exists():
+                  raise SystemExit(f"ERROR: Missing rollback: {rollback}")
+
+              if not rollback.read_text().strip():
+                  raise SystemExit(f"ERROR: Empty rollback: {rollback}")
+
+              print(f"VALID: {rollback}")
+
+          print("Rollback file validation completed.")
+          PY
