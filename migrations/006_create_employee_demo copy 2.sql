@@ -1,7 +1,7 @@
 -- UP
 
 CREATE TABLE IF NOT EXISTS
-`optimum-phalanx-514316-j3.automation_dataset.employee_sujal`
+`optimum-phalanx-514316-j3.automation_dataset.sujal`
 (
     employee_id INT64,
     employee_name STRING,
@@ -14,4 +14,4 @@ CREATE TABLE IF NOT EXISTS
 -- DOWN
 
 DROP TABLE IF EXISTS
-`optimum-phalanx-514316-j3.automation_dataset.employee_sujal`;
+`optimum-phalanx-514316-j3.automation_dataset.sujal`;
