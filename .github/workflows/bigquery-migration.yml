@@ -4,9 +4,14 @@ on:
   push:
     branches:
       - main
-  pull_request:
+name: BigQuery Migration CI/CD
+
+on:
+  push:
     branches:
       - main
+
+  workflow_dispatch:
   workflow_dispatch:
 
 jobs:
@@ -36,10 +41,11 @@ jobs:
           python -m py_compile scripts/migrate.py
           python -m py_compile scripts/test_bigquery.py
 
-      - name: Validate Migration SQL Files
+      - name: Validate Migration Files
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           migrations = sorted(Path("migrations").glob("*.sql"))
 
@@ -47,33 +53,30 @@ jobs:
               raise SystemExit("ERROR: No migration SQL files found")
 
           for migration in migrations:
-              if not migration.read_text().strip():
-                  raise SystemExit(f"ERROR: Empty migration: {migration}")
+              sql = migration.read_text()
+
+              up = re.search(
+                  r"(?ims)^\s*--\s*UP\s*$([\s\S]*?)^\s*--\s*DOWN\s*$",
+                  sql
+              )
+              down = re.search(
+                  r"(?ims)^\s*--\s*DOWN\s*$([\s\S]*)$",
+                  sql
+              )
+
+              if not up or not up.group(1).strip():
+                  raise SystemExit(
+                      f"ERROR: Missing or empty UP section: {migration}"
+                  )
+
+              if not down or not down.group(1).strip():
+                  raise SystemExit(
+                      f"ERROR: Missing or empty DOWN section: {migration}"
+                  )
+
               print(f"VALID: {migration}")
 
           print(f"Validated {len(migrations)} migration files.")
-          PY
-
-      - name: Validate Rollback SQL Files
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          migrations = sorted(Path("migrations").glob("*.sql"))
-          rollback_dir = Path("rollback")
-
-          for migration in migrations:
-              rollback = rollback_dir / migration.name
-
-              if not rollback.exists():
-                  raise SystemExit(f"ERROR: Missing rollback: {rollback}")
-
-              if not rollback.read_text().strip():
-                  raise SystemExit(f"ERROR: Empty rollback: {rollback}")
-
-              print(f"VALID: {rollback}")
-
-          print("Rollback file validation completed.")
           PY
 
   deploy:
@@ -81,10 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: validate
 
-    # Only deploy from main, never from pull requests.
-    if: >-
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
 
     permissions:
       contents: read

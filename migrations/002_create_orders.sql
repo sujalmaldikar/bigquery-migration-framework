@@ -1,4 +1,4 @@
-
+-- UP
 CREATE TABLE IF NOT EXISTS `optimum-phalanx-514316-j3.automation_dataset.orders` (
     order_id INT64 NOT NULL,
     customer_id INT64 NOT NULL,
@@ -7,3 +7,6 @@ CREATE TABLE IF NOT EXISTS `optimum-phalanx-514316-j3.automation_dataset.orders`
     order_status STRING,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 );
+
+-- DOWN
+DROP TABLE IF EXISTS `optimum-phalanx-514316-j3.automation_dataset.orders`;

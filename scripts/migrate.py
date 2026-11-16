@@ -12,9 +12,7 @@ from google.cloud import bigquery
 # --------------------------------------------------
 
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
-DATASET_ID = os.environ.get(
-    "BQ_DATASET", "automation_dataset"
-)
+DATASET_ID = os.environ.get("BQ_DATASET", "automation_dataset")
 
 if not PROJECT_ID:
     raise ValueError("GCP_PROJECT_ID is not set")
@@ -23,7 +21,6 @@ client = bigquery.Client(project=PROJECT_ID)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MIGRATIONS_DIR = BASE_DIR / "migrations"
-ROLLBACK_DIR = BASE_DIR / "rollback"
 
 DATASET_REF = f"{PROJECT_ID}.{DATASET_ID}"
 
@@ -50,10 +47,7 @@ def get_executed_migrations():
 
 def record_migration(migration_id):
     marker_name = get_marker_table_name(migration_id)
-
-    marker_table = (
-        f"`{PROJECT_ID}.{DATASET_ID}.{marker_name}`"
-    )
+    marker_table = f"`{PROJECT_ID}.{DATASET_ID}.{marker_name}`"
 
     query = f"""
     CREATE TABLE IF NOT EXISTS {marker_table} AS
@@ -75,30 +69,54 @@ def record_migration(migration_id):
 
 def remove_migration_record(migration_id):
     marker_name = get_marker_table_name(migration_id)
+    marker_table = f"`{PROJECT_ID}.{DATASET_ID}.{marker_name}`"
 
-    marker_table = (
-        f"`{PROJECT_ID}.{DATASET_ID}.{marker_name}`"
-    )
-
-    client.query(
-        f"DROP TABLE IF EXISTS {marker_table}"
-    ).result()
+    client.query(f"DROP TABLE IF EXISTS {marker_table}").result()
 
 
 # --------------------------------------------------
-# 3. Apply migrations
+# 3. Parse UP and DOWN sections
+# --------------------------------------------------
+
+def get_migration_sections(migration_file):
+    content = migration_file.read_text()
+
+    up_match = re.search(
+        r"(?ims)^\s*--\s*UP\s*$([\s\S]*?)^\s*--\s*DOWN\s*$",
+        content
+    )
+
+    down_match = re.search(
+        r"(?ims)^\s*--\s*DOWN\s*$([\s\S]*)$",
+        content
+    )
+
+    if not up_match or not down_match:
+        raise ValueError(
+            f"{migration_file.name} must contain -- UP and -- DOWN sections"
+        )
+
+    up_sql = up_match.group(1).strip()
+    down_sql = down_match.group(1).strip()
+
+    if not up_sql:
+        raise ValueError(f"Empty UP section: {migration_file.name}")
+
+    if not down_sql:
+        raise ValueError(f"Empty DOWN section: {migration_file.name}")
+
+    return up_sql, down_sql
+
+
+# --------------------------------------------------
+# 4. Apply migrations
 # --------------------------------------------------
 
 def run_migrations():
-
     executed = get_executed_migrations()
-
-    migration_files = sorted(
-        MIGRATIONS_DIR.glob("*.sql")
-    )
+    migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
 
     for migration_file in migration_files:
-
         migration_id = migration_file.name
         marker_name = get_marker_table_name(migration_id)
 
@@ -106,67 +124,38 @@ def run_migrations():
             print(f"SKIPPED: {migration_id}")
             continue
 
-        sql = migration_file.read_text().strip()
-
-        if not sql:
-            raise ValueError(
-                f"Empty migration: {migration_id}"
-            )
+        up_sql, _ = get_migration_sections(migration_file)
 
         print(f"RUNNING: {migration_id}")
 
-        client.query(sql).result()
-
+        client.query(up_sql).result()
         record_migration(migration_id)
 
         print(f"SUCCESS: {migration_id}")
 
 
 # --------------------------------------------------
-# 4. Find rollback files
-# --------------------------------------------------
-
-def get_rollback_file(migration_file):
-
-    rollback_file = (
-        ROLLBACK_DIR / migration_file.name
-    )
-
-    if not rollback_file.exists():
-        raise FileNotFoundError(
-            f"Rollback file missing: {rollback_file}"
-        )
-
-    return rollback_file
-
-
-# --------------------------------------------------
-# 5. Rollback one or all migrations
+# 5. Rollback migrations
 # --------------------------------------------------
 
 def rollback_migrations(rollback_all=False):
-
     migration_files = sorted(
         MIGRATIONS_DIR.glob("*.sql"),
         reverse=True
     )
 
     executed = get_executed_migrations()
-
     pending_rollbacks = []
 
     for migration_file in migration_files:
-
         migration_id = migration_file.name
         marker_name = get_marker_table_name(migration_id)
 
         if marker_name in executed:
-            rollback_file = get_rollback_file(
-                migration_file
-            )
+            _, down_sql = get_migration_sections(migration_file)
 
             pending_rollbacks.append(
-                (migration_id, rollback_file)
+                (migration_id, down_sql)
             )
 
             if not rollback_all:
@@ -176,11 +165,10 @@ def rollback_migrations(rollback_all=False):
         print("No executed migrations to roll back.")
         return
 
-    # Validate all rollback files before changing anything
     print("\nMigrations selected for rollback:")
 
-    for migration_id, rollback_file in pending_rollbacks:
-        print(f"  {migration_id} -> {rollback_file.name}")
+    for migration_id, _ in pending_rollbacks:
+        print(f"  {migration_id}")
 
     confirmation = input(
         "\nThis operation can permanently delete data. "
@@ -191,21 +179,10 @@ def rollback_migrations(rollback_all=False):
         print("Rollback cancelled.")
         return
 
-    # Execute in reverse order
-    for migration_id, rollback_file in pending_rollbacks:
-
+    for migration_id, down_sql in pending_rollbacks:
         print(f"\nROLLING BACK: {migration_id}")
 
-        sql = rollback_file.read_text().strip()
-
-        if not sql:
-            raise ValueError(
-                f"Empty rollback file: {rollback_file}"
-            )
-
-        client.query(sql).result()
-
-        # Remove tracking record only after successful rollback
+        client.query(down_sql).result()
         remove_migration_record(migration_id)
 
         print(f"ROLLBACK SUCCESS: {migration_id}")
@@ -216,18 +193,13 @@ def rollback_migrations(rollback_all=False):
 # --------------------------------------------------
 
 def show_status():
-
     executed = get_executed_migrations()
-
-    migration_files = sorted(
-        MIGRATIONS_DIR.glob("*.sql")
-    )
+    migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
 
     print("\nMIGRATION STATUS")
     print("-" * 45)
 
     for migration_file in migration_files:
-
         migration_id = migration_file.name
         marker_name = get_marker_table_name(migration_id)
 
@@ -247,7 +219,6 @@ def show_status():
 # --------------------------------------------------
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser(
         description="BigQuery Migration Framework"
     )
@@ -275,9 +246,7 @@ if __name__ == "__main__":
     print("\nStarting BigQuery Migration Engine...\n")
 
     if args.rollback and args.rollback_all:
-        parser.error(
-            "Choose either --rollback or --rollback-all"
-        )
+        parser.error("Choose either --rollback or --rollback-all")
 
     if args.rollback:
         rollback_migrations()
