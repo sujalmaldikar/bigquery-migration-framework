@@ -4,14 +4,6 @@ on:
   push:
     branches:
       - main
-name: BigQuery Migration CI/CD
-
-on:
-  push:
-    branches:
-      - main
-
-  workflow_dispatch:
   workflow_dispatch:
 
 jobs:
@@ -65,14 +57,10 @@ jobs:
               )
 
               if not up or not up.group(1).strip():
-                  raise SystemExit(
-                      f"ERROR: Missing or empty UP section: {migration}"
-                  )
+                  raise SystemExit(f"ERROR: Missing or empty UP section: {migration}")
 
               if not down or not down.group(1).strip():
-                  raise SystemExit(
-                      f"ERROR: Missing or empty DOWN section: {migration}"
-                  )
+                  raise SystemExit(f"ERROR: Missing or empty DOWN section: {migration}")
 
               print(f"VALID: {migration}")
 
